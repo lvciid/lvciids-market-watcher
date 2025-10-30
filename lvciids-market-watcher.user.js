@@ -35,18 +35,21 @@
       position: fixed;
       right: 20px;
       bottom: 20px;
-      padding: 10px 16px;
+      padding: 8px 14px;
       border: none;
-      border-radius: 18px;
-      cursor: pointer;
+      border-radius: 16px;
+      cursor: grab;
       color: #f9faff;
-      min-width: 110px;
+      min-width: 92px;
       background: linear-gradient(135deg, rgba(83,109,254,0.9), rgba(178,69,255,0.85));
-      box-shadow: 0 12px 22px rgba(62,0,140,0.35);
+      box-shadow: 0 10px 20px rgba(62,0,140,0.32);
       z-index: 9999;
       overflow: hidden;
       user-select: none;
+      transition: transform 160ms ease, opacity 160ms ease;
     }
+    .imwatch-button:active { cursor: grabbing; }
+    .imwatch-button.imwatch-dragging { cursor: grabbing; opacity: 0.9; }
     .imwatch-button.imwatch-paused { opacity: 0.6; }
     .imwatch-drawer {
       position: fixed;
@@ -55,7 +58,7 @@
       width: 320px;
       max-height: 440px;
       border-radius: 18px;
-      background: rgba(12,11,27,0.92);
+      background: rgba(12,11,27,0.9);
       backdrop-filter: blur(12px);
       box-shadow: 0 18px 34px rgba(18,2,56,0.45);
       color: #f0f3ff;
@@ -63,10 +66,11 @@
       display: none;
       z-index: 9999;
       overflow-y: auto;
+      animation: imwatch-panel-float 36s ease-in-out infinite;
     }
     .imwatch-drawer.imwatch-open {
       display: block;
-      animation: imwatch-drift 300ms ease-out;
+      animation: imwatch-drift 300ms ease-out, imwatch-panel-float 36s ease-in-out infinite;
     }
     .imwatch-popup {
       position: fixed;
@@ -248,6 +252,7 @@
       width: 150%;
       height: 150%;
       pointer-events: none;
+      z-index: -1;
     }
     .imwatch-star {
       position: absolute;
@@ -264,11 +269,13 @@
       filter: blur(20px);
       opacity: 0.9;
       pointer-events: none;
+      z-index: -1;
     }
     @keyframes imwatch-aurora-shift {
-      0% { transform: translate(-10%, -5%) rotate(0deg) scale(1); }
-      50% { transform: translate(5%, 10%) rotate(12deg) scale(1.05); }
-      100% { transform: translate(-10%, -5%) rotate(0deg) scale(1); }
+      0% { transform: translate(-12%, -8%) rotate(0deg) scale(1); }
+      35% { transform: translate(10%, 6%) rotate(10deg) scale(1.08); }
+      70% { transform: translate(-4%, 12%) rotate(-8deg) scale(1.04); }
+      100% { transform: translate(-12%, -8%) rotate(0deg) scale(1); }
     }
     @keyframes imwatch-star-drift {
       0% { transform: translateY(0); opacity: 0; }
@@ -281,10 +288,15 @@
       to { opacity: 1; transform: translateY(0); }
     }
     .imwatch-starfield .imwatch-star {
-      animation: imwatch-star-drift 8s linear infinite;
+      animation: imwatch-star-drift 10s linear infinite;
     }
     .imwatch-aurora {
-      animation: imwatch-aurora-shift 18s ease-in-out infinite;
+      animation: imwatch-aurora-shift 28s ease-in-out infinite;
+    }
+    @keyframes imwatch-panel-float {
+      0% { transform: translate3d(0, 0, 0); }
+      50% { transform: translate3d(0, -6px, 0); }
+      100% { transform: translate3d(0, 0, 0); }
     }
     .imwatch-secondary {
       position: fixed;
@@ -292,17 +304,18 @@
       bottom: 120px;
       width: 240px;
       border-radius: 16px;
-      background: rgba(20,18,42,0.95);
+      background: rgba(20,18,42,0.92);
       box-shadow: 0 12px 28px rgba(15,2,55,0.4);
       color: #f3f5ff;
       padding: 14px;
       display: none;
       z-index: 10000;
       overflow: hidden;
+      animation: imwatch-panel-float 44s ease-in-out infinite;
     }
     .imwatch-secondary.imwatch-open {
       display: block;
-      animation: imwatch-drift 240ms ease-out;
+      animation: imwatch-drift 240ms ease-out, imwatch-panel-float 44s ease-in-out infinite;
     }
     .imwatch-secondary h5 {
       margin: 0 0 10px;
@@ -318,6 +331,17 @@
     .imwatch-secondary input[type="range"] {
       width: 100%;
       margin-top: 4px;
+    }
+    .imwatch-secondary button {
+      margin-top: 10px;
+      padding: 6px 12px;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      background: rgba(127,199,255,0.2);
+      color: #cfe8ff;
+      font-weight: 600;
+      letter-spacing: 0.02em;
     }
     .imwatch-secondary-info {
       font-size: 11px;
@@ -361,6 +385,7 @@
       rules: [],
       logging: false,
       volume: 0.6,
+      buttonPosition: null,
     };
 
     /**
@@ -578,7 +603,7 @@
   })();
 
   const ItemsCache = (() => {
-    let cached = Storage.loadItems();
+    let cached = hydrate(Storage.loadItems());
 
     /**
      * Returns true when cached dictionary is stale.
@@ -606,16 +631,31 @@
         }
         const items = json.items || {};
         const mapByName = {};
+        const normalizedIndex = {};
+        const list = [];
         Object.values(items).forEach((item) => {
-          mapByName[item.name.toLowerCase()] = {
+          const normalized = normalizeName(item.name);
+          const entry = {
             id: Number(item.id),
             name: item.name,
+            normalized,
           };
+          mapByName[item.name.trim().toLowerCase()] = entry;
+          if (!normalizedIndex[normalized]) normalizedIndex[normalized] = [];
+          normalizedIndex[normalized].push(entry);
+          list.push(entry);
         });
         cached = {
           timestamp: Date.now(),
           byName: mapByName,
+          normalizedIndex,
+          list,
         };
+        Storage.saveItems(cached);
+      }
+      const needsUpgrade = cached && (!cached.list || !cached.normalizedIndex);
+      cached = hydrate(cached);
+      if (needsUpgrade && cached) {
         Storage.saveItems(cached);
       }
       return cached;
@@ -627,8 +667,7 @@
      * @returns {{id:number,name:string}|null}
      */
     function findByName(name) {
-      if (!cached) return null;
-      return cached.byName[name.trim().toLowerCase()] || null;
+      return resolve(name).match;
     }
 
     /**
@@ -636,13 +675,65 @@
      * @returns {string[]}
      */
     function listNames() {
-      if (!cached) return [];
-      return Object.values(cached.byName)
+      cached = hydrate(cached);
+      if (!cached || !Array.isArray(cached.list)) return [];
+      return cached.list
         .map((entry) => entry.name)
         .sort((a, b) => a.localeCompare(b));
     }
 
-    return { ensure, findByName, listNames };
+    /**
+     * Resolves an item name into a canonical match with optional suggestions.
+     * @param {string} name
+     * @returns {{match: {id:number,name:string}|null, suggestions: string[]}}
+     */
+    function resolve(name) {
+      cached = hydrate(cached);
+      if (!cached) return { match: null, suggestions: [] };
+      const trimmed = (name || '').trim();
+      if (!trimmed) return { match: null, suggestions: [] };
+      const lower = trimmed.toLowerCase();
+      if (cached.byName && cached.byName[lower]) {
+        return { match: cached.byName[lower], suggestions: [] };
+      }
+      const normalized = normalizeName(trimmed);
+      if (!normalized) return { match: null, suggestions: [] };
+      if (cached.normalizedIndex && cached.normalizedIndex[normalized] && cached.normalizedIndex[normalized].length === 1) {
+        return { match: cached.normalizedIndex[normalized][0], suggestions: [] };
+      }
+      const matches = (cached.list || []).filter((entry) => entry.normalized.includes(normalized));
+      if (matches.length === 1) {
+        return { match: matches[0], suggestions: [] };
+      }
+      const suggestions = matches.slice(0, 8).map((entry) => entry.name);
+      return { match: null, suggestions };
+    }
+
+    function hydrate(cache) {
+      if (!cache) return null;
+      if (cache.list && cache.normalizedIndex) return cache;
+      if (!cache.byName) cache.byName = {};
+      const list = [];
+      const normalizedIndex = {};
+      Object.values(cache.byName).forEach((entry) => {
+        if (!entry || typeof entry.id === 'undefined' || !entry.name) return;
+        const normalized = normalizeName(entry.name);
+        const hydrated = { id: Number(entry.id), name: entry.name, normalized };
+        cache.byName[entry.name.trim().toLowerCase()] = hydrated;
+        list.push(hydrated);
+        if (!normalizedIndex[normalized]) normalizedIndex[normalized] = [];
+        normalizedIndex[normalized].push(hydrated);
+      });
+      cache.list = list;
+      cache.normalizedIndex = normalizedIndex;
+      return cache;
+    }
+
+    function normalizeName(str) {
+      return (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    return { ensure, findByName, listNames, resolve };
   })();
 
   const Toast = (() => {
@@ -1191,6 +1282,12 @@
     let editingApiKey = false;
     let apiKeyError = false;
     let focusApiKeyField = false;
+    let dragPointerId = null;
+    let dragOffset = null;
+    let dragStartPosition = null;
+    let dragOriginRect = null;
+    let suppressClick = false;
+    let lastAppliedPosition = null;
 
     /**
      * Initializes dashboard controls and bindings.
@@ -1202,14 +1299,18 @@
       button.className = 'imwatch-button';
       button.type = 'button';
       button.textContent = 'Market Watch';
-      attachAurora(button);
-      button.addEventListener('click', () => toggleDrawer());
+      button.addEventListener('pointerdown', onButtonPointerDown);
+      button.addEventListener('pointermove', onButtonPointerMove);
+      button.addEventListener('pointerup', onButtonPointerUp);
+      button.addEventListener('lostpointercapture', onButtonPointerCancel);
+      button.addEventListener('click', onButtonClick);
       button.addEventListener('contextmenu', onButtonContextMenu);
       document.body.appendChild(button);
+      attachAurora(button);
+      applyButtonPosition(cfg.buttonPosition);
 
       drawer = document.createElement('div');
       drawer.className = 'imwatch-drawer';
-      attachAurora(drawer);
       drawer.innerHTML = renderDrawer(cfg);
       if (editingApiKey) {
         requestApiKeyFocus();
@@ -1223,9 +1324,15 @@
       document.body.appendChild(secondaryPanel);
       bindSecondary(secondaryPanel);
       updateVolume(cfg.volume);
+      window.addEventListener('resize', onWindowResize);
 
       document.addEventListener('click', onDocumentClick);
       document.addEventListener('keydown', onDocumentKeydown);
+      if (cfg.apiKey && !ItemsCache.listNames().length) {
+        ItemsCache.ensure(cfg.apiKey).then(() => redraw()).catch((err) => {
+          Logger.error('Failed to preload items dictionary', err);
+        });
+      }
     }
 
     /**
@@ -1293,7 +1400,7 @@
           </div>
           <div class="imwatch-form-group">
             <label for="imwatch-threshold">Price</label>
-            <input id="imwatch-threshold" type="number" min="1" placeholder="e.g. 150000"/>
+            <input id="imwatch-threshold" type="text" inputmode="numeric" placeholder="e.g. 150,000"/>
           </div>
         </div>
         <button type="button" class="imwatch-add-btn" style="width:100%;padding:8px 0;border:none;border-radius:12px;background:rgba(124,162,255,0.25);color:#dbe6ff;font-weight:600;cursor:pointer;">Add rule</button>
@@ -1318,6 +1425,7 @@
         <label>Chime volume
           <input class="imwatch-volume-slider" type="range" min="0" max="100" value="${volumePercent}" />
         </label>
+        <button type="button" class="imwatch-chime-test">Play chime</button>
         <div class="imwatch-secondary-info">If there are any problems contact lvciid [3888554]</div>
       `;
     }
@@ -1360,14 +1468,26 @@
       root.querySelector('#imwatch-poll-max').addEventListener('change', onPollingChange);
       root.querySelector('#imwatch-logging').addEventListener('change', onLoggingToggle);
       const saveKeyBtn = root.querySelector('.imwatch-save-key-btn');
-      if (saveKeyBtn) saveKeyBtn.addEventListener('click', onSaveApiKey);
+      if (saveKeyBtn) {
+        saveKeyBtn.addEventListener('click', () => {
+          onSaveApiKey().catch((err) => Logger.error('Failed to save API key', err));
+        });
+      }
       const editKeyBtn = root.querySelector('.imwatch-edit-key');
       if (editKeyBtn) editKeyBtn.addEventListener('click', onEditApiKey);
       const apiInput = root.querySelector('#imwatch-api');
       if (apiInput) {
         apiInput.addEventListener('keydown', (evt) => {
-          if (evt.key === 'Enter') onSaveApiKey();
+          if (evt.key === 'Enter') {
+            evt.preventDefault();
+            onSaveApiKey().catch((err) => Logger.error('Failed to save API key', err));
+          }
         });
+      }
+      const thresholdInput = root.querySelector('#imwatch-threshold');
+      if (thresholdInput) {
+        thresholdInput.addEventListener('input', onThresholdInput);
+        thresholdInput.addEventListener('blur', onThresholdBlur);
       }
       root.addEventListener('click', (evt) => {
         const row = evt.target.closest('.imwatch-rule-row');
@@ -1384,6 +1504,7 @@
         const input = root.querySelector('#imwatch-api');
         if (input) setTimeout(() => input.focus(), 0);
       }
+      attachAurora(root);
     }
 
     /**
@@ -1395,6 +1516,11 @@
       if (volumeSlider) {
         volumeSlider.addEventListener('input', onVolumeInput);
       }
+      const chimeBtn = root.querySelector('.imwatch-chime-test');
+      if (chimeBtn) {
+        chimeBtn.addEventListener('click', onChimeTest);
+      }
+      attachAurora(root);
     }
 
     /**
@@ -1408,24 +1534,34 @@
         flagApiKeyError();
         return;
       }
-      await ItemsCache.ensure(apiKey).catch((err) => {
+      try {
+        await ItemsCache.ensure(apiKey);
+      } catch (err) {
         Logger.error(err);
         Toast.show('Failed to refresh items dictionary. Check API key.');
-      });
+        return;
+      }
       const nameInput = drawer.querySelector('#imwatch-item-name');
       const direction = drawer.querySelector('#imwatch-direction').value;
       const thresholdInput = drawer.querySelector('#imwatch-threshold');
-      const threshold = Number(thresholdInput.value.trim());
+      const threshold = parsePriceInput(thresholdInput.value);
       const name = nameInput.value.trim();
       if (!name || !Number.isFinite(threshold)) {
         Toast.show('Provide item name and price.');
         return;
       }
-      const item = ItemsCache.findByName(name);
+      const { match: item, suggestions } = ItemsCache.resolve(name);
       if (!item) {
-        Toast.show('Item not found in dictionary.');
+        const suggestionText = suggestions && suggestions.length
+          ? ` Suggestions: ${suggestions.slice(0, 5).join(', ')}.`
+          : '';
+        Toast.show(`Item not found.${suggestionText}`);
+        if (suggestions && suggestions.length) {
+          nameInput.value = suggestions[0];
+        }
         return;
       }
+      nameInput.value = item.name;
       const rules = cfg.rules.slice();
       rules.push({
         itemId: item.id,
@@ -1439,6 +1575,7 @@
       redraw();
       nameInput.value = '';
       thresholdInput.value = '';
+      onThresholdBlur({ target: thresholdInput });
     }
 
     /**
@@ -1479,15 +1616,61 @@
     }
 
     /**
+     * Plays a chime preview at the configured volume.
+     */
+    function onChimeTest() {
+      AudioChime.play((currentConfig && currentConfig.volume) ?? Storage.DEFAULT_CONFIG.volume);
+    }
+
+    /**
+     * Sanitises price input to digits only.
+     * @param {Event} evt
+     */
+    function onThresholdInput(evt) {
+      const input = evt.target;
+      if (!input) return;
+      const digits = input.value.replace(/[^\d]/g, '');
+      input.value = digits;
+    }
+
+    /**
+     * Formats price input with grouping separators on blur.
+     * @param {Event} evt
+     */
+    function onThresholdBlur(evt) {
+      const input = evt.target;
+      if (!input) return;
+      const value = parsePriceInput(input.value);
+      if (!Number.isFinite(value)) {
+        input.value = '';
+        return;
+      }
+      input.value = formatPrice(value);
+    }
+
+    /**
      * Persists API key from the input field.
      */
-    function onSaveApiKey() {
+    async function onSaveApiKey() {
       const input = drawer.querySelector('#imwatch-api');
       if (!input) return;
       const value = input.value.trim();
       if (!value) {
         apiKeyError = true;
         Toast.show('API key cannot be empty.');
+        requestApiKeyFocus();
+        redraw();
+        return;
+      }
+      try {
+        await ItemsCache.ensure(value, true);
+      } catch (err) {
+        Logger.error('API key validation failed', err);
+        apiKeyError = true;
+        const message = err && err.code === 2
+          ? 'Torn API rejected that key. Please check and try again.'
+          : 'Unable to validate API key. Please verify and try again.';
+        Toast.show(message);
         requestApiKeyFocus();
         redraw();
         return;
@@ -1576,6 +1759,7 @@
       if (!target) return;
       target.innerHTML = renderDrawer(cfg);
       bindDrawer(target);
+      attachAurora(target);
     }
 
     function requestApiKeyFocus() {
@@ -1683,6 +1867,146 @@
       redraw();
     }
 
+    /**
+     * Applies a saved button position from configuration.
+     * @param {{x:number,y:number}|null} pos
+     */
+    function setButtonPosition(pos) {
+      applyButtonPosition(pos);
+    }
+
+    function onButtonPointerDown(evt) {
+      if (evt.button !== undefined && evt.button !== 0) return;
+      if (!button) return;
+      dragPointerId = evt.pointerId;
+      suppressClick = false;
+      const rect = button.getBoundingClientRect();
+      dragOffset = { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
+      dragStartPosition = getCurrentButtonPosition();
+      dragOriginRect = { x: rect.left, y: rect.top };
+      button.setPointerCapture(dragPointerId);
+      button.classList.add('imwatch-dragging');
+    }
+
+    function onButtonPointerMove(evt) {
+      if (evt.pointerId !== dragPointerId || !dragOffset || !button) return;
+      const candidate = { x: evt.clientX - dragOffset.x, y: evt.clientY - dragOffset.y };
+      const clamped = clampButtonPosition(candidate.x, candidate.y);
+      applyButtonPosition(clamped);
+      const origin = dragStartPosition || dragOriginRect;
+      if (!suppressClick && origin) {
+        const dx = Math.abs(clamped.x - origin.x);
+        const dy = Math.abs(clamped.y - origin.y);
+        if (dx > 3 || dy > 3) suppressClick = true;
+      }
+    }
+
+    function onButtonPointerUp(evt) {
+      if (evt.pointerId !== dragPointerId) return;
+      if (button && dragPointerId !== null) {
+        try { button.releasePointerCapture(dragPointerId); } catch (err) { Logger.debug('releasePointerCapture', err); }
+      }
+      button?.classList.remove('imwatch-dragging');
+      if (suppressClick && lastAppliedPosition) {
+        saveButtonPosition(lastAppliedPosition);
+      } else if (!suppressClick) {
+        applyButtonPosition(dragStartPosition);
+      }
+      dragPointerId = null;
+      dragOffset = null;
+      dragStartPosition = null;
+      dragOriginRect = null;
+      setTimeout(() => { suppressClick = false; }, 0);
+    }
+
+    function onButtonPointerCancel() {
+      if (button && dragPointerId !== null) {
+        try { button.releasePointerCapture(dragPointerId); } catch (err) { Logger.debug('releasePointerCapture', err); }
+      }
+      button?.classList.remove('imwatch-dragging');
+      dragPointerId = null;
+      dragOffset = null;
+      dragStartPosition = null;
+      dragOriginRect = null;
+      suppressClick = false;
+    }
+
+    function onButtonClick(evt) {
+      if (suppressClick) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        suppressClick = false;
+        return;
+      }
+      toggleDrawer();
+    }
+
+    function onWindowResize() {
+      const cfg = Storage.getConfig();
+      if (cfg.buttonPosition) {
+        const clamped = clampButtonPosition(cfg.buttonPosition.x, cfg.buttonPosition.y);
+        applyButtonPosition(clamped);
+        if (cfg.buttonPosition.x !== clamped.x || cfg.buttonPosition.y !== clamped.y) {
+          cfg.buttonPosition = clamped;
+          Storage.saveConfig(cfg);
+        }
+      } else {
+        applyButtonPosition(null);
+      }
+    }
+
+    function getCurrentButtonPosition() {
+      if (!button) return null;
+      const left = parseFloat(button.style.left);
+      const top = parseFloat(button.style.top);
+      if (Number.isFinite(left) && Number.isFinite(top)) {
+        return { x: left, y: top };
+      }
+      return null;
+    }
+
+    function applyButtonPosition(pos) {
+      if (!button) return;
+      if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+        const clamped = clampButtonPosition(pos.x, pos.y);
+        button.style.left = `${clamped.x}px`;
+        button.style.top = `${clamped.y}px`;
+        button.style.right = '';
+        button.style.bottom = '';
+        lastAppliedPosition = clamped;
+      } else {
+        button.style.left = '';
+        button.style.top = '';
+        button.style.right = '20px';
+        button.style.bottom = '20px';
+        lastAppliedPosition = null;
+      }
+    }
+
+    function saveButtonPosition(pos) {
+      if (!pos) return;
+      const clamped = clampButtonPosition(pos.x, pos.y);
+      lastAppliedPosition = clamped;
+      const cfg = Storage.getConfig();
+      const existing = cfg.buttonPosition;
+      if (existing && Math.abs(existing.x - clamped.x) < 1 && Math.abs(existing.y - clamped.y) < 1) {
+        return;
+      }
+      cfg.buttonPosition = clamped;
+      Storage.saveConfig(cfg);
+    }
+
+    function clampButtonPosition(x, y) {
+      if (!button) return { x, y };
+      const margin = 10;
+      const maxX = Math.max(margin, window.innerWidth - button.offsetWidth - margin);
+      const maxY = Math.max(margin, window.innerHeight - button.offsetHeight - margin);
+      return {
+        x: clamp(x, margin, maxX),
+        y: clamp(y, margin, maxY),
+      };
+    }
+
     return {
       init,
       setPaused,
@@ -1694,11 +2018,15 @@
       closeSecondary,
       updateVolume,
       flagApiKeyError,
+      setButtonPosition,
     };
   })();
 
   Storage.subscribe((cfg) => {
     UI.updateVolume(cfg.volume ?? Storage.DEFAULT_CONFIG.volume);
+  });
+  Storage.subscribe((cfg) => {
+    UI.setButtonPosition(cfg.buttonPosition);
   });
 
   /**
@@ -1759,6 +2087,17 @@
   }
 
   /**
+   * Parses currency-like input into a numeric value.
+   * @param {string} value
+   * @returns {number}
+   */
+  function parsePriceInput(value) {
+    const digits = String(value || '').replace(/[^\d]/g, '');
+    if (!digits) return NaN;
+    return Number(digits);
+  }
+
+  /**
    * Clamps number into inclusive bounds.
    * @param {number} value
    * @param {number} min
@@ -1775,12 +2114,17 @@
    * @param {HTMLElement} target
    */
   function attachAurora(target) {
-    const aurora = document.createElement('div');
-    aurora.className = 'imwatch-aurora';
+    if (!target) return;
+    Array.from(target.children).forEach((child) => {
+      if (child.classList && (child.classList.contains('imwatch-aurora') || child.classList.contains('imwatch-starfield'))) {
+        child.remove();
+      }
+    });
+    const insertAnchor = target.firstChild;
     if (!prefersReducedMotion) {
       const starfield = document.createElement('div');
       starfield.className = 'imwatch-starfield';
-      const stars = 20;
+      const stars = 22;
       for (let i = 0; i < stars; i += 1) {
         const star = document.createElement('div');
         star.className = 'imwatch-star';
@@ -1789,9 +2133,11 @@
         star.style.animationDelay = `${Math.random() * 6}s`;
         starfield.appendChild(star);
       }
-      target.appendChild(starfield);
+      target.insertBefore(starfield, insertAnchor);
     }
-    target.appendChild(aurora);
+    const aurora = document.createElement('div');
+    aurora.className = 'imwatch-aurora';
+    target.insertBefore(aurora, insertAnchor);
   }
 
   /**
@@ -1845,6 +2191,7 @@
    * @property {WatchRule[]} rules
    * @property {boolean} logging
    * @property {number} volume
+   * @property {{x:number,y:number}|null} buttonPosition
    */
 
   /**
@@ -1887,7 +2234,9 @@
   /**
    * @typedef {Object} ItemsCache
    * @property {number} timestamp
-   * @property {Record<string,{id:number,name:string}>} byName
+   * @property {Record<string,{id:number,name:string,normalized:string}>} byName
+   * @property {Record<string,Array<{id:number,name:string,normalized:string}>>} normalizedIndex
+   * @property {Array<{id:number,name:string,normalized:string}>} list
    */
 
   init();
