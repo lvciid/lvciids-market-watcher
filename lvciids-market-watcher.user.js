@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         lvciid's Market Watcher (Aurora)
 // @namespace    https://github.com/lvciid/lvciids-market-watcher
-// @version      1.0.0
+// @version      1.1.0
 // @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
 // @author       lvciid
 // @homepageURL  https://github.com/lvciid/lvciids-market-watcher
@@ -20,11 +20,6 @@
 // @connect      api.torn.com
 // @run-at       document-idle
 // ==/UserScript==
-
-/*
-README:
-Open dashboard → paste your API key → add rule. Configure thresholds, hit Test, and leave the watcher running.
-*/
 
 (function () {
   'use strict';
@@ -108,6 +103,53 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       background: rgba(255,255,255,0.14);
       color: #fff;
       font-size: 13px;
+    }
+    .imwatch-api-input {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .imwatch-api-input input {
+      flex: 1;
+    }
+    .imwatch-api-input button,
+    .imwatch-api-pill button {
+      padding: 6px 12px;
+      border-radius: 12px;
+      border: none;
+      cursor: pointer;
+      background: rgba(122,182,255,0.22);
+      color: #d4e6ff;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .imwatch-api-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(122,98,255,0.15);
+      border: 1px solid rgba(148,182,255,0.35);
+      padding: 6px 12px;
+      border-radius: 999px;
+    }
+    .imwatch-pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #6fffc7;
+      box-shadow: 0 0 8px rgba(125,255,222,0.7);
+    }
+    .imwatch-pill-text {
+      flex: 1;
+      font-size: 12px;
+      color: #e6f0ff;
+      font-weight: 500;
+    }
+    .imwatch-field-error {
+      margin-top: 6px;
+      color: #ff9aa7;
+      font-size: 12px;
+      letter-spacing: 0.01em;
     }
     .imwatch-title {
       font-family: "Brush Script MT", "Lucida Handwriting", cursive;
@@ -885,6 +927,9 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     return { getDelay, increase, reset };
   })();
 
+  let lastBadKeyToast = 0;
+  let lastBadKeyNotification = 0;
+
   const Watcher = (() => {
     let timer = null;
     let paused = false;
@@ -959,9 +1004,6 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
           const resp = await Api.fetchItemMarket(itemId, config.apiKey);
           if (resp.error) {
             handleApiError(resp.error);
-            if (resp.error.code === 2) {
-              Toast.show('API key rejected. Update it in Market Watch.');
-            }
             continue;
           }
           const listings = (resp.itemmarket && Object.values(resp.itemmarket)) || [];
@@ -1077,7 +1119,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
         Backoff.increase();
         Toast.show('Torn API busy. Backing off and retrying shortly.');
       } else if (code === 2) {
-        Toast.show('API key rejected. Please update it in Market Watch.');
+        handleApiKeyFailure();
       } else if (error.type === 'timeout' || error.type === 'network') {
         Toast.show('Network issue reaching Torn API. Will retry.');
       }
@@ -1146,12 +1188,16 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     let volumeSlider = null;
     let isOpen = false;
     let secondaryOpen = false;
+    let editingApiKey = false;
+    let apiKeyError = false;
+    let focusApiKeyField = false;
 
     /**
      * Initializes dashboard controls and bindings.
      */
     function init() {
       const cfg = Storage.getConfig();
+      editingApiKey = !cfg.apiKey;
       button = document.createElement('button');
       button.className = 'imwatch-button';
       button.type = 'button';
@@ -1165,6 +1211,9 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       drawer.className = 'imwatch-drawer';
       attachAurora(drawer);
       drawer.innerHTML = renderDrawer(cfg);
+      if (editingApiKey) {
+        requestApiKeyFocus();
+      }
       bindDrawer(drawer);
       document.body.appendChild(drawer);
 
@@ -1190,16 +1239,32 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       const polling = cfg.polling || { min: 15, max: 30 };
       const itemsOptions = items.map((name) => `<option value="${escapeHtml(name)}"></option>`).join('');
       const rulesHTML = rules.map((rule, index) => renderRule(rule, index)).join('') || '<div>No rules yet.</div>';
+      const showApiInput = editingApiKey || !cfg.apiKey;
+      const errorHtml = apiKeyError ? '<div class="imwatch-field-error">Torn rejected this API key. Please verify and try again.</div>' : '';
+      const apiKeySection = showApiInput
+        ? `<div class="imwatch-form-group">
+          <label for="imwatch-api">API Key</label>
+          <div class="imwatch-api-input">
+            <input id="imwatch-api" type="password" placeholder="Paste Torn API key" value="${editingApiKey ? escapeHtml(cfg.apiKey || '') : ''}" autocomplete="off" />
+            <button type="button" class="imwatch-save-key-btn">Save</button>
+          </div>
+          ${errorHtml}
+        </div>`
+        : `<div class="imwatch-form-group">
+          <label>API Key</label>
+          <div class="imwatch-api-pill" title="Click to update your Torn API key">
+            <span class="imwatch-pill-dot"></span>
+            <span class="imwatch-pill-text">API key saved</span>
+            <button type="button" class="imwatch-edit-key">Change</button>
+          </div>
+        </div>`;
 
       return `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
           <div class="imwatch-title">lvciid's Market Watcher</div>
           <button type="button" class="imwatch-test-btn" style="padding:6px 10px;border-radius:12px;border:none;cursor:pointer;background:rgba(121,211,255,0.18);color:#9fd6ff;">Test</button>
         </div>
-        <div class="imwatch-form-group">
-          <label for="imwatch-api">API Key</label>
-          <input id="imwatch-api" type="password" placeholder="Paste Torn API key" value="${escapeHtml(cfg.apiKey || '')}" autocomplete="off" />
-        </div>
+        ${apiKeySection}
         <div class="imwatch-inline">
           <div class="imwatch-form-group">
             <label for="imwatch-poll-min">Poll min (s)</label>
@@ -1291,10 +1356,19 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     function bindDrawer(root) {
       root.querySelector('.imwatch-add-btn').addEventListener('click', onAddRule);
       root.querySelector('.imwatch-test-btn').addEventListener('click', () => Watcher.manualPoll());
-      root.querySelector('#imwatch-api').addEventListener('change', onApiKeyChange);
       root.querySelector('#imwatch-poll-min').addEventListener('change', onPollingChange);
       root.querySelector('#imwatch-poll-max').addEventListener('change', onPollingChange);
       root.querySelector('#imwatch-logging').addEventListener('change', onLoggingToggle);
+      const saveKeyBtn = root.querySelector('.imwatch-save-key-btn');
+      if (saveKeyBtn) saveKeyBtn.addEventListener('click', onSaveApiKey);
+      const editKeyBtn = root.querySelector('.imwatch-edit-key');
+      if (editKeyBtn) editKeyBtn.addEventListener('click', onEditApiKey);
+      const apiInput = root.querySelector('#imwatch-api');
+      if (apiInput) {
+        apiInput.addEventListener('keydown', (evt) => {
+          if (evt.key === 'Enter') onSaveApiKey();
+        });
+      }
       root.addEventListener('click', (evt) => {
         const row = evt.target.closest('.imwatch-rule-row');
         if (!row) return;
@@ -1305,6 +1379,11 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
           toggleRule(index, evt.target.checked);
         }
       });
+      if (focusApiKeyField) {
+        focusApiKeyField = false;
+        const input = root.querySelector('#imwatch-api');
+        if (input) setTimeout(() => input.focus(), 0);
+      }
     }
 
     /**
@@ -1326,6 +1405,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       const apiKey = cfg.apiKey;
       if (!apiKey) {
         Toast.show('Enter your Torn API key first.');
+        flagApiKeyError();
         return;
       }
       await ItemsCache.ensure(apiKey).catch((err) => {
@@ -1359,16 +1439,6 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       redraw();
       nameInput.value = '';
       thresholdInput.value = '';
-    }
-
-    /**
-     * Handles API key change input.
-     * @param {Event} evt
-     */
-    function onApiKeyChange(evt) {
-      const cfg = Storage.getConfig();
-      cfg.apiKey = evt.target.value.trim();
-      Storage.saveConfig(cfg);
     }
 
     /**
@@ -1406,6 +1476,39 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       const cfg = Storage.getConfig();
       cfg.volume = clamp(pct / 100, 0, 1);
       Storage.saveConfig(cfg);
+    }
+
+    /**
+     * Persists API key from the input field.
+     */
+    function onSaveApiKey() {
+      const input = drawer.querySelector('#imwatch-api');
+      if (!input) return;
+      const value = input.value.trim();
+      if (!value) {
+        apiKeyError = true;
+        Toast.show('API key cannot be empty.');
+        requestApiKeyFocus();
+        redraw();
+        return;
+      }
+      const cfg = Storage.getConfig();
+      cfg.apiKey = value;
+      Storage.saveConfig(cfg);
+      editingApiKey = false;
+      apiKeyError = false;
+      Toast.show('API key saved.');
+      redraw();
+    }
+
+    /**
+     * Switches the API key section into edit mode.
+     */
+    function onEditApiKey() {
+      editingApiKey = true;
+      apiKeyError = false;
+      requestApiKeyFocus();
+      redraw();
     }
 
     /**
@@ -1470,8 +1573,13 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     function redraw(root) {
       const cfg = Storage.getConfig();
       const target = root || drawer;
+      if (!target) return;
       target.innerHTML = renderDrawer(cfg);
       bindDrawer(target);
+    }
+
+    function requestApiKeyFocus() {
+      focusApiKeyField = true;
     }
 
     /**
@@ -1564,6 +1672,17 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       }
     }
 
+    /**
+     * Flags the API key input with an error and focuses it.
+     */
+    function flagApiKeyError() {
+      apiKeyError = true;
+      editingApiKey = true;
+      requestApiKeyFocus();
+      openDrawer();
+      redraw();
+    }
+
     return {
       init,
       setPaused,
@@ -1574,12 +1693,45 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       openSecondary,
       closeSecondary,
       updateVolume,
+      flagApiKeyError,
     };
   })();
 
   Storage.subscribe((cfg) => {
     UI.updateVolume(cfg.volume ?? Storage.DEFAULT_CONFIG.volume);
   });
+
+  /**
+   * Notifies the user about API key failures and opens the editor.
+   */
+  function handleApiKeyFailure() {
+    const now = Date.now();
+    const hasKey = !!(currentConfig && currentConfig.apiKey);
+    const message = hasKey
+      ? 'Torn API rejected your API key. Please update it in Market Watch.'
+      : 'Add your Torn API key in Market Watch to enable alerts.';
+    if (now - lastBadKeyToast > 12000) {
+      Toast.show(message);
+      lastBadKeyToast = now;
+    }
+    if (typeof GM_notification === 'function' && now - lastBadKeyNotification > 60000) {
+      try {
+        GM_notification({
+          title: "lvciid's Market Watcher",
+          text: message,
+          timeout: 10000,
+          onclick: () => {
+            try { window.focus(); } catch (err) { Logger.debug('window focus failed', err); }
+            UI.openDrawer();
+          },
+        });
+      } catch (err) {
+        Logger.error('GM_notification failed', err);
+      }
+      lastBadKeyNotification = now;
+    }
+    UI.flagApiKeyError();
+  }
 
   /**
    * Escapes HTML characters.

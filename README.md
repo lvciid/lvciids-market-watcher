@@ -15,7 +15,7 @@ lvciid's Market Watcher is a Tampermonkey userscript for torn.com that keeps an 
 1. Install the Tampermonkey browser extension if you have not already.
 2. Click the download link below and approve the install prompt in Tampermonkey.
 
-Download via Tampermonkey: [Install lvciid's Market Watcher](lvciids-market-watcher.user.js)
+Download via Tampermonkey: [Install lvciid's Market Watcher](https://raw.githubusercontent.com/lvciid/lvciids-market-watcher/main/lvciids-market-watcher.user.js)
 
 ## Usage
 1. Open torn.com and wait for the floating “Market Watch” button to appear in the lower-right corner.
