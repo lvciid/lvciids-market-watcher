@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         lvciid's Market Watcher (Aurora)
 // @namespace    https://github.com/lvciid/lvciids-market-watcher
-// @version      1.3.2
+// @version      1.3.4
 // @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
 // @author       lvciid
 // @homepageURL  https://github.com/lvciid/lvciids-market-watcher
@@ -1908,8 +1908,9 @@
     }
 
     function onButtonPointerDown(evt) {
-      if (evt.button !== undefined && evt.button !== 0) return;
+      if (evt.button !== undefined && evt.button !== 0 && evt.pointerType === 'mouse') return;
       if (!button) return;
+      evt.preventDefault();
       dragPointerId = evt.pointerId;
       dragDidMove = false;
       ignoreNextClick = false;
@@ -1924,13 +1925,14 @@
 
     function onButtonPointerMove(evt) {
       if (evt.pointerId !== dragPointerId || !dragOffset || !button) return;
+      evt.preventDefault();
       const candidate = { x: evt.clientX - dragOffset.x, y: evt.clientY - dragOffset.y };
       const clamped = clampButtonPosition(candidate.x, candidate.y);
       applyButtonPosition(clamped);
-      if (pointerStart) {
-        const dx = Math.abs(evt.clientX - pointerStart.x);
-        const dy = Math.abs(evt.clientY - pointerStart.y);
-        if (dx > 3 || dy > 3) {
+      if (pointerStart && !dragDidMove) {
+        const dx = evt.clientX - pointerStart.x;
+        const dy = evt.clientY - pointerStart.y;
+        if ((dx * dx + dy * dy) >= 1) {
           dragDidMove = true;
           ignoreNextClick = true;
         }
@@ -2035,7 +2037,7 @@
 
     function clampButtonPosition(x, y) {
       if (!button) return { x, y };
-      const margin = 10;
+      const margin = 0;
       const maxX = Math.max(margin, window.innerWidth - button.offsetWidth - margin);
       const maxY = Math.max(margin, window.innerHeight - button.offsetHeight - margin);
       return {
