@@ -1,14 +1,23 @@
 // ==UserScript==
-// @name         Torn Item Market Watcher (Aurora)
-// @namespace    kevin.imwatch
+// @name         lvciid's Market Watcher (Aurora)
+// @namespace    https://github.com/lvciid/lvciids-market-watcher
 // @version      1.0.0
-// @description  Alert when Torn Item Market listings cross your price thresholds; highlight hits on page.
-// @author       Kevin
+// @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
+// @author       lvciid
+// @homepageURL  https://github.com/lvciid/lvciids-market-watcher
+// @supportURL   https://github.com/lvciid/lvciids-market-watcher/issues
+// @source       https://github.com/lvciid/lvciids-market-watcher
+// @updateURL    https://raw.githubusercontent.com/lvciid/lvciids-market-watcher/main/lvciids-market-watcher.user.js
+// @downloadURL  https://raw.githubusercontent.com/lvciid/lvciids-market-watcher/main/lvciids-market-watcher.user.js
+// @icon         https://raw.githubusercontent.com/lvciid/lvciids-market-watcher/main/icon.png
 // @match        https://www.torn.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
+// @grant        GM_notification
 // @grant        GM_xmlhttpRequest
+// @connect      api.torn.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -41,6 +50,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       box-shadow: 0 12px 22px rgba(62,0,140,0.35);
       z-index: 9999;
       overflow: hidden;
+      user-select: none;
     }
     .imwatch-button.imwatch-paused { opacity: 0.6; }
     .imwatch-drawer {
@@ -98,6 +108,14 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       background: rgba(255,255,255,0.14);
       color: #fff;
       font-size: 13px;
+    }
+    .imwatch-title {
+      font-family: "Brush Script MT", "Lucida Handwriting", cursive;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: #f8ecff;
+      text-shadow: 0 2px 6px rgba(83,30,140,0.35);
     }
     .imwatch-form-group {
       margin-bottom: 14px;
@@ -226,10 +244,50 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     .imwatch-aurora {
       animation: imwatch-aurora-shift 18s ease-in-out infinite;
     }
+    .imwatch-secondary {
+      position: fixed;
+      right: 20px;
+      bottom: 120px;
+      width: 240px;
+      border-radius: 16px;
+      background: rgba(20,18,42,0.95);
+      box-shadow: 0 12px 28px rgba(15,2,55,0.4);
+      color: #f3f5ff;
+      padding: 14px;
+      display: none;
+      z-index: 10000;
+      overflow: hidden;
+    }
+    .imwatch-secondary.imwatch-open {
+      display: block;
+      animation: imwatch-drift 240ms ease-out;
+    }
+    .imwatch-secondary h5 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .imwatch-secondary label {
+      font-size: 12px;
+      display: block;
+      margin-bottom: 6px;
+    }
+    .imwatch-secondary input[type="range"] {
+      width: 100%;
+      margin-top: 4px;
+    }
+    .imwatch-secondary-info {
+      font-size: 11px;
+      color: rgba(218,224,255,0.78);
+      margin-top: 12px;
+      line-height: 1.4;
+    }
     @media (prefers-reduced-motion: reduce) {
       .imwatch-starfield .imwatch-star,
       .imwatch-aurora,
       .imwatch-drawer.imwatch-open,
+      .imwatch-secondary,
       .imwatch-button,
       .imwatch-popup { animation: none !important; transition: none !important; }
     }
@@ -260,6 +318,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       polling: { min: 15, max: 30 },
       rules: [],
       logging: false,
+      volume: 0.6,
     };
 
     /**
@@ -274,7 +333,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       try {
         return Object.assign(structuredClone(DEFAULT_CONFIG), JSON.parse(raw));
       } catch (err) {
-        console.error('[IM Watch] Failed to parse config, resetting.', err);
+        console.error('[Market Watch] Failed to parse config, resetting.', err);
         return structuredClone(DEFAULT_CONFIG);
       }
     }
@@ -308,7 +367,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
       try {
         return JSON.parse(raw);
       } catch (err) {
-        console.warn('[IM Watch] Items cache parse failed.', err);
+        console.warn('[Market Watch] Items cache parse failed.', err);
         return null;
       }
     }
@@ -359,6 +418,9 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     };
   })();
 
+  let currentConfig = Storage.getConfig();
+  Storage.subscribe((cfg) => { currentConfig = cfg; });
+
   const Logger = (() => {
     let enabled = Storage.getConfig().logging;
 
@@ -370,7 +432,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
      */
     function debug(...args) {
       if (!enabled) return;
-      console.debug('[IM Watch]', ...args);
+      console.debug('[Market Watch]', ...args);
     }
 
     /**
@@ -379,7 +441,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
      */
     function info(...args) {
       if (!enabled) return;
-      console.info('[IM Watch]', ...args);
+      console.info('[Market Watch]', ...args);
     }
 
     /**
@@ -387,7 +449,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
      * @param {...any} args
      */
     function error(...args) {
-      console.error('[IM Watch]', ...args);
+      console.error('[Market Watch]', ...args);
     }
 
     return { debug, info, error };
@@ -630,6 +692,72 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     return { show };
   })();
 
+  const AudioChime = (() => {
+    let ctx = null;
+
+    /**
+     * Ensures an AudioContext instance exists and is resumed.
+     * @returns {AudioContext|null}
+     */
+    function ensureContext() {
+      if (!ctx) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) return null;
+        ctx = new Ctor();
+      }
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      return ctx;
+    }
+
+    /**
+     * Plays a soft chime using Web Audio oscillators.
+     * @param {number} volume
+     */
+    function play(volume) {
+      const audio = ensureContext();
+      if (!audio) return;
+      const gain = audio.createGain();
+      const vol = clamp(volume ?? Storage.DEFAULT_CONFIG.volume, 0, 1);
+      if (vol <= 0) return;
+      const now = audio.currentTime + 0.02;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0001), now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+      gain.connect(audio.destination);
+
+      const oscA = audio.createOscillator();
+      oscA.type = 'sine';
+      oscA.frequency.setValueAtTime(880, now);
+      oscA.frequency.exponentialRampToValueAtTime(660, now + 0.9);
+      oscA.connect(gain);
+
+      const oscB = audio.createOscillator();
+      oscB.type = 'triangle';
+      oscB.frequency.setValueAtTime(1320, now);
+      oscB.frequency.exponentialRampToValueAtTime(990, now + 0.9);
+      oscB.connect(gain);
+
+      oscA.start(now);
+      oscB.start(now + 0.04);
+      oscA.stop(now + 1.2);
+      oscB.stop(now + 1.1);
+
+      setTimeout(() => {
+        try {
+          oscA.disconnect();
+          oscB.disconnect();
+          gain.disconnect();
+        } catch (err) {
+          Logger.debug('Chime cleanup issue', err);
+        }
+      }, 1600);
+    }
+
+    return { play };
+  })();
+
   const Highlight = (() => {
     const observers = [];
     let lastHighlights = [];
@@ -832,7 +960,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
           if (resp.error) {
             handleApiError(resp.error);
             if (resp.error.code === 2) {
-              Toast.show('API key rejected. Update it in IM Watch.');
+              Toast.show('API key rejected. Update it in Market Watch.');
             }
             continue;
           }
@@ -949,7 +1077,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
         Backoff.increase();
         Toast.show('Torn API busy. Backing off and retrying shortly.');
       } else if (code === 2) {
-        Toast.show('API key rejected. Please update it in IM Watch.');
+        Toast.show('API key rejected. Please update it in Market Watch.');
       } else if (error.type === 'timeout' || error.type === 'network') {
         Toast.show('Network issue reaching Torn API. Will retry.');
       }
@@ -971,6 +1099,24 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
         link: `https://www.torn.com/imarket.php#/p=shop&step=shop&type=${rule.itemId}`,
       };
       Popup.show(payload);
+      AudioChime.play(currentConfig.volume ?? Storage.DEFAULT_CONFIG.volume);
+      if (typeof GM_notification === 'function') {
+        const comparator = rule.direction === 'lower' ? '≤' : '≥';
+        const notificationText = `${payload.itemName}: ${formatPrice(payload.price)} (${comparator} ${formatPrice(rule.thresholdPrice)}) Qty ${payload.quantity}`;
+        try {
+          GM_notification({
+            title: "lvciid's Market Watcher",
+            text: notificationText,
+            timeout: 8000,
+            onclick: () => {
+              try { window.focus(); } catch (err) { Logger.debug('window focus failed', err); }
+              window.location.href = payload.link;
+            },
+          });
+        } catch (err) {
+          Logger.error('GM_notification failed', err);
+        }
+      }
       const pending = Storage.loadPendingHighlights();
       pending.push({
         listingId: payload.listingId,
@@ -996,26 +1142,41 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
   const UI = (() => {
     let button = null;
     let drawer = null;
+    let secondaryPanel = null;
+    let volumeSlider = null;
     let isOpen = false;
+    let secondaryOpen = false;
 
     /**
      * Initializes dashboard controls and bindings.
      */
     function init() {
+      const cfg = Storage.getConfig();
       button = document.createElement('button');
       button.className = 'imwatch-button';
       button.type = 'button';
-      button.textContent = 'IM Watch';
+      button.textContent = 'Market Watch';
       attachAurora(button);
-      button.addEventListener('click', toggleDrawer);
+      button.addEventListener('click', () => toggleDrawer());
+      button.addEventListener('contextmenu', onButtonContextMenu);
       document.body.appendChild(button);
 
       drawer = document.createElement('div');
       drawer.className = 'imwatch-drawer';
       attachAurora(drawer);
-      drawer.innerHTML = renderDrawer(Storage.getConfig());
+      drawer.innerHTML = renderDrawer(cfg);
       bindDrawer(drawer);
       document.body.appendChild(drawer);
+
+      secondaryPanel = document.createElement('div');
+      secondaryPanel.className = 'imwatch-secondary';
+      secondaryPanel.innerHTML = renderSecondary(cfg);
+      document.body.appendChild(secondaryPanel);
+      bindSecondary(secondaryPanel);
+      updateVolume(cfg.volume);
+
+      document.addEventListener('click', onDocumentClick);
+      document.addEventListener('keydown', onDocumentKeydown);
     }
 
     /**
@@ -1032,7 +1193,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
 
       return `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-          <div style="font-weight:700;font-size:15px;">Item Market Watcher</div>
+          <div class="imwatch-title">lvciid's Market Watcher</div>
           <button type="button" class="imwatch-test-btn" style="padding:6px 10px;border-radius:12px;border:none;cursor:pointer;background:rgba(121,211,255,0.18);color:#9fd6ff;">Test</button>
         </div>
         <div class="imwatch-form-group">
@@ -1077,6 +1238,22 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
         <div style="font-size:11px;margin-top:8px;color:rgba(221,229,255,0.74);">
           ⭐ Data and API key stored locally only; not shared. Conforms to Torn API ToS.
         </div>
+      `;
+    }
+
+    /**
+     * Builds the auxiliary panel content.
+     * @param {ConfigState} cfg
+     * @returns {string}
+     */
+    function renderSecondary(cfg) {
+      const volumePercent = Math.round(clamp(cfg.volume ?? Storage.DEFAULT_CONFIG.volume, 0, 1) * 100);
+      return `
+        <h5>Audio & Support</h5>
+        <label>Chime volume
+          <input class="imwatch-volume-slider" type="range" min="0" max="100" value="${volumePercent}" />
+        </label>
+        <div class="imwatch-secondary-info">If there are any problems contact lvciid [3888554]</div>
       `;
     }
 
@@ -1128,6 +1305,17 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
           toggleRule(index, evt.target.checked);
         }
       });
+    }
+
+    /**
+     * Binds events for the secondary panel.
+     * @param {HTMLElement} root
+     */
+    function bindSecondary(root) {
+      volumeSlider = root.querySelector('.imwatch-volume-slider');
+      if (volumeSlider) {
+        volumeSlider.addEventListener('input', onVolumeInput);
+      }
     }
 
     /**
@@ -1209,6 +1397,48 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     }
 
     /**
+     * Handles volume slider input.
+     * @param {Event} evt
+     */
+    function onVolumeInput(evt) {
+      const pct = Number(evt.target.value);
+      if (Number.isNaN(pct)) return;
+      const cfg = Storage.getConfig();
+      cfg.volume = clamp(pct / 100, 0, 1);
+      Storage.saveConfig(cfg);
+    }
+
+    /**
+     * Handles auxiliary button context menu.
+     * @param {MouseEvent} evt
+     */
+    function onButtonContextMenu(evt) {
+      evt.preventDefault();
+      evt.stopPropagation();
+      toggleSecondaryPanel();
+    }
+
+    /**
+     * Handles document-wide clicks to dismiss panels.
+     * @param {MouseEvent} evt
+     */
+    function onDocumentClick(evt) {
+      if (secondaryOpen && secondaryPanel && !secondaryPanel.contains(evt.target) && evt.target !== button) {
+        closeSecondary();
+      }
+    }
+
+    /**
+     * Handles ESC key to close panels.
+     * @param {KeyboardEvent} evt
+     */
+    function onDocumentKeydown(evt) {
+      if (evt.key === 'Escape') {
+        closeSecondary();
+      }
+    }
+
+    /**
      * Deletes rule by index.
      * @param {number} index
      */
@@ -1245,29 +1475,111 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
     }
 
     /**
+     * Sets drawer open state.
+     * @param {boolean} state
+     */
+    function setDrawerOpen(state) {
+      if (!drawer) return;
+      isOpen = state;
+      drawer.classList.toggle('imwatch-open', isOpen);
+    }
+
+    /**
      * Toggles drawer open/closed.
      */
     function toggleDrawer() {
-      isOpen = !isOpen;
-      if (isOpen) {
-        drawer.classList.add('imwatch-open');
-      } else {
-        drawer.classList.remove('imwatch-open');
+      closeSecondary();
+      setDrawerOpen(!isOpen);
+    }
+
+    /**
+     * Opens the drawer if currently closed.
+     */
+    function openDrawer() {
+      if (!isOpen) {
+        closeSecondary();
+        setDrawerOpen(true);
       }
     }
 
     /**
-     * Updates button appearance for paused state.
+     * Closes the drawer if currently open.
+     */
+    function closeDrawer() {
+      if (isOpen) {
+        setDrawerOpen(false);
+      }
+    }
+
+    /**
+     * Updates floating button paused appearance.
      * @param {boolean} state
      */
     function setPaused(state) {
       if (!button) return;
       button.classList.toggle('imwatch-paused', state);
-      button.textContent = state ? 'IM Watch (paused)' : 'IM Watch';
+      button.textContent = state ? 'Market Watch (paused)' : 'Market Watch';
     }
 
-    return { init, setPaused, redraw };
+    /**
+     * Sets secondary panel open state.
+     * @param {boolean} state
+     */
+    function setSecondaryOpen(state) {
+      if (!secondaryPanel) return;
+      secondaryOpen = state;
+      secondaryPanel.classList.toggle('imwatch-open', secondaryOpen);
+    }
+
+    /**
+     * Opens the secondary panel.
+     */
+    function openSecondary() {
+      setSecondaryOpen(true);
+    }
+
+    /**
+     * Closes the secondary panel.
+     */
+    function closeSecondary() {
+      setSecondaryOpen(false);
+    }
+
+    /**
+     * Toggles the secondary panel.
+     */
+    function toggleSecondaryPanel() {
+      setSecondaryOpen(!secondaryOpen);
+    }
+
+    /**
+     * Updates the volume slider to reflect stored volume.
+     * @param {number} volume
+     */
+    function updateVolume(volume) {
+      if (!volumeSlider) return;
+      const value = Math.round(clamp(volume ?? Storage.DEFAULT_CONFIG.volume, 0, 1) * 100);
+      if (Number(volumeSlider.value) !== value) {
+        volumeSlider.value = String(value);
+      }
+    }
+
+    return {
+      init,
+      setPaused,
+      redraw,
+      toggleDrawer,
+      openDrawer,
+      closeDrawer,
+      openSecondary,
+      closeSecondary,
+      updateVolume,
+    };
   })();
+
+  Storage.subscribe((cfg) => {
+    UI.updateVolume(cfg.volume ?? Storage.DEFAULT_CONFIG.volume);
+  });
 
   /**
    * Escapes HTML characters.
@@ -1336,7 +1648,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
   function ensureApiKey() {
     const cfg = Storage.getConfig();
     if (!cfg.apiKey) {
-      const key = prompt('Torn Item Market Watcher\\nEnter your Torn API key (kept locally):');
+      const key = prompt("lvciid's Market Watcher\\nEnter your Torn API key (kept locally):");
       if (key) {
         cfg.apiKey = key.trim();
         Storage.saveConfig(cfg);
@@ -1363,6 +1675,11 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
   function init() {
     ensureApiKey();
     UI.init();
+    if (typeof GM_registerMenuCommand === 'function') {
+      GM_registerMenuCommand("Open Market Watcher dashboard", () => UI.openDrawer());
+      GM_registerMenuCommand("Toggle Market Watcher dashboard", () => UI.toggleDrawer());
+      GM_registerMenuCommand("Audio settings", () => UI.openSecondary());
+    }
     Watcher.start();
     consumeHighlights();
     window.addEventListener('hashchange', () => consumeHighlights());
@@ -1375,6 +1692,7 @@ Open dashboard → paste your API key → add rule. Configure thresholds, hit Te
    * @property {{min:number,max:number}} polling
    * @property {WatchRule[]} rules
    * @property {boolean} logging
+   * @property {number} volume
    */
 
   /**
