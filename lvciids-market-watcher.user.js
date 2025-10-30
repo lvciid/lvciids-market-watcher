@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         lvciid's Market Watcher (Aurora)
 // @namespace    https://github.com/lvciid/lvciids-market-watcher
-// @version      1.2.0
+// @version      1.3.1
 // @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
 // @author       lvciid
 // @homepageURL  https://github.com/lvciid/lvciids-market-watcher
@@ -44,12 +44,16 @@
       background: linear-gradient(135deg, rgba(83,109,254,0.9), rgba(178,69,255,0.85));
       box-shadow: 0 10px 20px rgba(62,0,140,0.32);
       z-index: 9999;
-      overflow: hidden;
+      overflow: visible;
       user-select: none;
       transition: transform 160ms ease, opacity 160ms ease;
     }
     .imwatch-button:active { cursor: grabbing; }
     .imwatch-button.imwatch-dragging { cursor: grabbing; opacity: 0.9; }
+    .imwatch-button .imwatch-aurora,
+    .imwatch-button .imwatch-starfield {
+      pointer-events: none;
+    }
     .imwatch-button.imwatch-paused { opacity: 0.6; }
     .imwatch-drawer {
       position: fixed;
@@ -851,41 +855,66 @@
     function play(volume) {
       const audio = ensureContext();
       if (!audio) return;
-      const gain = audio.createGain();
       const vol = clamp(volume ?? Storage.DEFAULT_CONFIG.volume, 0, 1);
-      if (vol <= 0) return;
-      const now = audio.currentTime + 0.02;
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(Math.max(vol, 0.0001), now + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
-      gain.connect(audio.destination);
+      if (vol <= 0.0001) return;
 
-      const oscA = audio.createOscillator();
-      oscA.type = 'sine';
-      oscA.frequency.setValueAtTime(880, now);
-      oscA.frequency.exponentialRampToValueAtTime(660, now + 0.9);
-      oscA.connect(gain);
+      const now = audio.currentTime + 0.04;
 
-      const oscB = audio.createOscillator();
-      oscB.type = 'triangle';
-      oscB.frequency.setValueAtTime(1320, now);
-      oscB.frequency.exponentialRampToValueAtTime(990, now + 0.9);
-      oscB.connect(gain);
+      const master = audio.createGain();
+      master.gain.setValueAtTime(Math.max(vol * 0.75, 0.002), now);
+      master.gain.linearRampToValueAtTime(Math.max(vol * 0.38, 0.001), now + 2.1);
+      master.connect(audio.destination);
 
-      oscA.start(now);
-      oscB.start(now + 0.04);
-      oscA.stop(now + 1.2);
-      oscB.stop(now + 1.1);
+      const filter = audio.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2200, now);
+      filter.Q.value = 0.8;
+      filter.connect(master);
+
+      const delay = audio.createDelay(1.6);
+      delay.delayTime.setValueAtTime(0.35, now);
+      const delayGain = audio.createGain();
+      delayGain.gain.setValueAtTime(0.22, now);
+      filter.connect(delay);
+      delay.connect(delayGain);
+      delayGain.connect(filter);
+
+      const tones = [
+        { freq: 987.77, type: 'sine', detune: 0, start: 0 },
+        { freq: 1244.51, type: 'sine', detune: 6, start: 0.08 },
+        { freq: 1567.98, type: 'triangle', detune: -8, start: 0.16 },
+      ];
+
+      const nodes = [master, filter, delay, delayGain];
+
+      tones.forEach((tone) => {
+        const osc = audio.createOscillator();
+        const env = audio.createGain();
+        osc.type = tone.type;
+        osc.frequency.setValueAtTime(tone.freq, now);
+        if (tone.detune) {
+          osc.detune.setValueAtTime(tone.detune, now);
+        }
+        env.gain.setValueAtTime(0.0001, now + tone.start);
+        env.gain.linearRampToValueAtTime(Math.max(vol * 0.8, 0.001), now + tone.start + 0.18);
+        env.gain.linearRampToValueAtTime(Math.max(vol * 0.3, 0.0005), now + tone.start + 0.95);
+        env.gain.linearRampToValueAtTime(0.0001, now + tone.start + 2.0);
+        osc.connect(env);
+        env.connect(filter);
+        osc.start(now + tone.start);
+        osc.stop(now + tone.start + 2.3);
+        nodes.push(osc, env);
+      });
 
       setTimeout(() => {
-        try {
-          oscA.disconnect();
-          oscB.disconnect();
-          gain.disconnect();
-        } catch (err) {
-          Logger.debug('Chime cleanup issue', err);
-        }
-      }, 1600);
+        nodes.forEach((node) => {
+          try {
+            node.disconnect();
+          } catch (err) {
+            Logger.debug('Chime cleanup issue', err);
+          }
+        });
+      }, 2600);
     }
 
     return { play };
@@ -1286,7 +1315,9 @@
     let dragOffset = null;
     let dragStartPosition = null;
     let dragOriginRect = null;
-    let suppressClick = false;
+    let dragDidMove = false;
+    let ignoreNextClick = false;
+    let pointerStart = null;
     let lastAppliedPosition = null;
 
     /**
@@ -1879,7 +1910,9 @@
       if (evt.button !== undefined && evt.button !== 0) return;
       if (!button) return;
       dragPointerId = evt.pointerId;
-      suppressClick = false;
+      dragDidMove = false;
+      ignoreNextClick = false;
+      pointerStart = { x: evt.clientX, y: evt.clientY };
       const rect = button.getBoundingClientRect();
       dragOffset = { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
       dragStartPosition = getCurrentButtonPosition();
@@ -1893,11 +1926,13 @@
       const candidate = { x: evt.clientX - dragOffset.x, y: evt.clientY - dragOffset.y };
       const clamped = clampButtonPosition(candidate.x, candidate.y);
       applyButtonPosition(clamped);
-      const origin = dragStartPosition || dragOriginRect;
-      if (!suppressClick && origin) {
-        const dx = Math.abs(clamped.x - origin.x);
-        const dy = Math.abs(clamped.y - origin.y);
-        if (dx > 3 || dy > 3) suppressClick = true;
+      if (pointerStart) {
+        const dx = Math.abs(evt.clientX - pointerStart.x);
+        const dy = Math.abs(evt.clientY - pointerStart.y);
+        if (dx > 3 || dy > 3) {
+          dragDidMove = true;
+          ignoreNextClick = true;
+        }
       }
     }
 
@@ -1907,16 +1942,15 @@
         try { button.releasePointerCapture(dragPointerId); } catch (err) { Logger.debug('releasePointerCapture', err); }
       }
       button?.classList.remove('imwatch-dragging');
-      if (suppressClick && lastAppliedPosition) {
+      if (dragDidMove && lastAppliedPosition) {
         saveButtonPosition(lastAppliedPosition);
-      } else if (!suppressClick) {
-        applyButtonPosition(dragStartPosition);
       }
       dragPointerId = null;
       dragOffset = null;
       dragStartPosition = null;
       dragOriginRect = null;
-      setTimeout(() => { suppressClick = false; }, 0);
+      pointerStart = null;
+      dragDidMove = false;
     }
 
     function onButtonPointerCancel() {
@@ -1928,14 +1962,16 @@
       dragOffset = null;
       dragStartPosition = null;
       dragOriginRect = null;
-      suppressClick = false;
+      pointerStart = null;
+      dragDidMove = false;
+      ignoreNextClick = false;
     }
 
     function onButtonClick(evt) {
-      if (suppressClick) {
+      if (ignoreNextClick) {
         evt.preventDefault();
         evt.stopPropagation();
-        suppressClick = false;
+        ignoreNextClick = false;
         return;
       }
       toggleDrawer();
