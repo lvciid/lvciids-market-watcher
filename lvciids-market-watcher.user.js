@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         lvciid's Market Watcher (Aurora)
 // @namespace    https://github.com/lvciid/lvciids-market-watcher
-// @version      1.3.4
+// @version      1.3.5
 // @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
 // @author       lvciid
 // @homepageURL  https://github.com/lvciid/lvciids-market-watcher
@@ -23,6 +23,10 @@
 
 (function () {
   'use strict';
+
+  const deepClone = typeof structuredClone === 'function'
+    ? structuredClone
+    : (value) => (value === undefined ? value : JSON.parse(JSON.stringify(value)));
 
   const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -400,13 +404,13 @@
     function getConfig() {
       const raw = GM_getValue(CONFIG_KEY);
       if (!raw) {
-        return structuredClone(DEFAULT_CONFIG);
+        return deepClone(DEFAULT_CONFIG);
       }
       try {
-        return Object.assign(structuredClone(DEFAULT_CONFIG), JSON.parse(raw));
+        return Object.assign(deepClone(DEFAULT_CONFIG), JSON.parse(raw));
       } catch (err) {
         console.error('[Market Watch] Failed to parse config, resetting.', err);
-        return structuredClone(DEFAULT_CONFIG);
+        return deepClone(DEFAULT_CONFIG);
       }
     }
 
@@ -417,7 +421,7 @@
     function saveConfig(cfg) {
       GM_setValue(CONFIG_KEY, JSON.stringify(cfg));
       LISTENERS.forEach((fn) => {
-        try { fn(structuredClone(cfg)); } catch (e) { console.error(e); }
+        try { fn(deepClone(cfg)); } catch (e) { console.error(e); }
       });
     }
 
