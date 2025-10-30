@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         lvciid's Market Watcher (Aurora)
 // @namespace    https://github.com/lvciid/lvciids-market-watcher
-// @version      1.1.0
+// @version      1.2.0
 // @description  Monitors the Torn Item Market and alerts when items cross your price thresholds; highlights hits with an aurora-styled UI.
 // @author       lvciid
 // @homepageURL  https://github.com/lvciid/lvciids-market-watcher
